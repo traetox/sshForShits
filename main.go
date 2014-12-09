@@ -68,18 +68,24 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-
-	for {
+	failCount := 0
+	for failCount < 10 {
 		conn, err := socket.Accept()
 		if err != nil {
-			panic(err)
+			failCount++
+			continue
 		}
 
 		// From a standard TCP connection to an encrypted SSH connection
 		sshConn, chans, reqs, err := ssh.NewServerConn(conn, &config)
 		if err != nil {
-			panic(err)
+			failCount++
+			continue
 		}
 		go mainHandler(sshConn, chans, reqs, hnd)
+		failCount = 0
+	}
+	if failCount >= 10 {
+		fmt.Fprintf(os.Stderr, "Bailed after %d errors\n", failCount)
 	}
 }
