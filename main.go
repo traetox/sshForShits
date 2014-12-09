@@ -86,6 +86,6 @@ func main() {
 		failCount = 0
 	}
 	if failCount >= 10 {
-		fmt.Fprintf(os.Stderr, "Bailed after %d errors\n", failCount)
+		log.Printf("Bailed after %d errors\n", failCount)
 	}
 }
