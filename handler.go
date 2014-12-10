@@ -7,17 +7,18 @@ import (
 	"golang.org/x/crypto/ssh"
 	"io"
 	"sync"
+	"time"
 )
 
 const (
 	pmpt = "sh-4.3$ "
 )
 
-func mainHandler(conn *ssh.ServerConn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request, handler fakeshell.Handler) {
+func mainHandler(conn *ssh.ServerConn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request, handler fakeshell.Handler, dg datagram) {
 	wg := sync.WaitGroup{}
 	wg.Add(2)
 	go handleRequests(reqs, &wg)
-	go handleChannels(chans, &wg, handler)
+	go handleChannels(chans, &wg, handler, dg)
 	wg.Wait()
 }
 
@@ -27,7 +28,7 @@ func handleRequests(reqs <-chan *ssh.Request, wg *sync.WaitGroup) {
 	}
 }
 
-func handleChannels(chans <-chan ssh.NewChannel, wg *sync.WaitGroup, handler fakeshell.Handler) {
+func handleChannels(chans <-chan ssh.NewChannel, wg *sync.WaitGroup, handler fakeshell.Handler, dg datagram) {
 	defer wg.Done()
 	// Service the incoming Channel channel.
 	for newChannel := range chans {
@@ -45,7 +46,7 @@ func handleChannels(chans <-chan ssh.NewChannel, wg *sync.WaitGroup, handler fak
 		}
 
 		//fire up our fake shell
-		c := fakeshell.New("sh-4.3$ ", handler)
+		c := fakeshell.New("sh-4.3$ ", handler, &dg)
 		f, err := pty.StartFaker(c)
 		if err != nil {
 			continue
@@ -56,6 +57,8 @@ func handleChannels(chans <-chan ssh.NewChannel, wg *sync.WaitGroup, handler fak
 		close := func() {
 			channel.Close()
 			c.Wait()
+			dg.Logout = time.Now().Format(time.RFC3339Nano)
+			activityClient.Write(dg)
 		}
 
 		//pipe session to bash and visa-versa

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -15,20 +16,34 @@ var (
 	bindAddr             = flag.String("b", "", "Address to bind to, if nil, bind all")
 	portNum              = flag.String("p", "22", "Port to bind to")
 	keyFile              = flag.String("k", "/tmp/hostkey", "Host keyfile for the server")
+	remoteServer         = flag.String("s", "ds063140.mongolab.com:63140", "mongodb server")
+	user                 = flag.String("user", "", "mongodb user")
+	pass                 = flag.String("pass", "", "mongodb password")
+	db                   = flag.String("db", "sshforshits", "mongodb database")
+	coll                 = flag.String("col", "pwns", "mongodb collection")
+	enforceCert          = flag.Bool("c", false, "Enforce SSL Certs")
 	logger               *log.Logger
 	hostPrivateKeySigner ssh.Signer
+	activityClient       *shellActivityClient
 )
 
 func init() {
 	flag.Parse()
-	if *logFile == "" {
-		log.Panic("Invalid log output file")
+	if *remoteServer == "" {
+		log.Panic("Invalid API server url")
 	}
-	fout, err := os.OpenFile(*logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		panic(err)
+	if *user == "" || *pass == "" || *db == "" || *coll == "" {
+		log.Panic("Empty mongo info")
 	}
-	logger = log.New(fout, "", log.LstdFlags)
+	if *logFile != "" {
+		fout, err := os.OpenFile(*logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			panic(err)
+		}
+		logger = log.New(fout, "", log.LstdFlags)
+	} else {
+		logger = log.New(ioutil.Discard, "", log.LstdFlags)
+	}
 	hostPrivateKey, err := ioutil.ReadFile(*keyFile)
 	if err != nil {
 		panic(err)
@@ -47,10 +62,18 @@ func passAuth(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 		host = conn.RemoteAddr().String()
 	}
 	logger.Printf("%s %s:%s\n", host, conn.User(), string(pass))
-	return nil, nil
+	creds := map[string]string{}
+	creds["username"] = conn.User()
+	creds["password"] = string(pass)
+	perm := ssh.Permissions{
+		CriticalOptions: nil,
+		Extensions:      creds,
+	}
+	return &perm, nil
 }
 
 func main() {
+	var err error
 	var port string
 	config := ssh.ServerConfig{
 		PasswordCallback: passAuth,
@@ -64,28 +87,62 @@ func main() {
 	hnd := NewHandler()
 	registerCommands(hnd)
 
+	activityClient, err = NewShellActivityClient(*remoteServer, *db, *coll, *user, *pass)
+	if err != nil {
+		panic(err)
+	}
+	if err = activityClient.Login(); err != nil {
+		log.Printf("Failed to login, all writes will be cached until we can actually login")
+		log.Printf("Error: \"%v\"\n", err)
+	}
+
 	socket, err := net.Listen("tcp", *bindAddr+":"+port)
 	if err != nil {
 		panic(err)
 	}
-	failCount := 0
-	for failCount < 10 {
+	defer socket.Close()
+	for {
 		conn, err := socket.Accept()
 		if err != nil {
-			failCount++
+			log.Printf("Accept error: %v\n", err)
 			continue
 		}
 
 		// From a standard TCP connection to an encrypted SSH connection
 		sshConn, chans, reqs, err := ssh.NewServerConn(conn, &config)
 		if err != nil {
-			failCount++
+			log.Printf("NewServerConn error: %v\n", err)
 			continue
 		}
-		go mainHandler(sshConn, chans, reqs, hnd)
-		failCount = 0
-	}
-	if failCount >= 10 {
-		log.Printf("Bailed after %d errors\n", failCount)
+		if sshConn.Permissions == nil {
+			log.Printf("Failed to get ssh permissions\n")
+			sshConn.Close()
+			continue
+		}
+		if sshConn.Permissions.Extensions == nil {
+			log.Printf("ssh permissions extensions are nil")
+			sshConn.Close()
+			continue
+		}
+		user, ok := sshConn.Permissions.Extensions["username"]
+		if !ok {
+			log.Printf("ssh permission extensions is missing the username")
+			sshConn.Close()
+			continue
+		}
+		pass, ok := sshConn.Permissions.Extensions["password"]
+		if !ok {
+			log.Printf("ssh permission extensions is missing the password")
+			sshConn.Close()
+			continue
+		}
+		dg := datagram{
+			Login: time.Now().Format(time.RFC3339Nano),
+			Src:   sshConn.Conn.RemoteAddr().String(),
+			Dst:   sshConn.Conn.LocalAddr().String(),
+			User:  user,
+			Pass:  pass,
+		}
+		go mainHandler(sshConn, chans, reqs, hnd, dg)
 	}
 }

@@ -19,19 +19,25 @@ type fakeShell struct {
 	doneChan chan error
 	mtx      *sync.Mutex
 	running  bool
+	ca       CommandAdd
 }
 
 type Handler interface {
 	Handle(string, []string, io.Writer) (bool, error)
 }
 
-func New(prompt string, hn Handler) *fakeShell {
+type CommandAdd interface {
+	AddCommand(string, string) error
+}
+
+func New(prompt string, hn Handler, ca CommandAdd) *fakeShell {
 	return &fakeShell{
 		prompt:   prompt,
 		doneChan: make(chan error, 2),
 		mtx:      &sync.Mutex{},
 		running:  false,
 		h:        hn,
+		ca:       ca,
 	}
 }
 
@@ -64,6 +70,7 @@ func (f *fakeShell) Start() error {
 }
 
 func (f *fakeShell) routine() {
+	bb := buffer{}
 	rdr := bufio.NewReader(f.stdin)
 	for {
 		fmt.Fprintf(f.stdout, "%s", f.prompt)
@@ -86,14 +93,37 @@ func (f *fakeShell) routine() {
 		} else {
 			args = nil
 		}
-		ok, err := f.h.Handle(cmd, args, f.stdout)
+		bb.Reset()
+		wtr := io.MultiWriter(&bb, f.stdout)
+		ok, err := f.h.Handle(cmd, args, wtr)
 		if err != nil {
 			break
 		}
 		if !ok {
-			fmt.Fprintf(f.stdout, "sh: %s: command not found\n", cmd)
+			fmt.Fprintf(wtr, "sh: %s: command not found\n", cmd)
 		}
+		f.ca.AddCommand(f.prompt+ln, bb.String())
 	}
 	f.running = false
 	f.doneChan <- f.closer.Close()
+}
+
+type buffer struct {
+	buf []byte
+}
+
+func (b *buffer) Write(x []byte) (int, error) {
+	b.buf = append(b.buf, x...)
+	return len(x), nil
+}
+
+func (b *buffer) Reset() {
+	b.buf = nil
+}
+
+func (b *buffer) String() string {
+	if len(b.buf) == 0 {
+		return ""
+	}
+	return string(b.buf)
 }
