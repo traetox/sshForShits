@@ -83,6 +83,7 @@ func (f *fakeShell) routine() {
 			continue
 		}
 		if ln == "exit" {
+			f.ca.AddCommand(f.prompt+ln, "")
 			break
 		}
 		flds := strings.Fields(ln)

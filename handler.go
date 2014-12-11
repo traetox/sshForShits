@@ -58,7 +58,9 @@ func handleChannels(chans <-chan ssh.NewChannel, wg *sync.WaitGroup, handler fak
 			channel.Close()
 			c.Wait()
 			dg.Logout = time.Now().Format(time.RFC3339Nano)
-			activityClient.Write(dg)
+			if len(dg.ShellActivity) > 0 {
+				activityClient.Write(dg)
+			}
 		}
 
 		//pipe session to bash and visa-versa
