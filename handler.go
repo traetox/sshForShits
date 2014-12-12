@@ -1,13 +1,14 @@
 package main
 
 import (
-	"./fakeshell"
 	"fmt"
-	"github.com/traetox/pty"
-	"golang.org/x/crypto/ssh"
 	"io"
 	"sync"
 	"time"
+
+	"github.com/traetox/pty"
+	"github.com/traetox/sshForShits/fakeshell"
+	"github.com/traetox/sshForShits/ssh"
 )
 
 const (
