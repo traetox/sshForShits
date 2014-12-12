@@ -32,6 +32,7 @@ var (
 	activityClient       *shellActivityClient
 	attemptChan          chan attempt
 	becomeUID            int
+	becomeGID            int
 )
 
 func init() {
@@ -70,7 +71,12 @@ func init() {
 		if err != nil {
 			panic(err)
 		}
+		gid, err := strconv.Atoi(usr.Gid)
+		if err != nil {
+			panic(err)
+		}
 		becomeUID = uid
+		becomeGID = gid
 	}
 	attemptChan = make(chan attempt, 16)
 }
@@ -127,12 +133,18 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if becomeUID != 0 {
+	if becomeUID != 0 && becomeGID != 0 {
+		if err := syscall.Setgid(becomeGID); err != nil {
+			panic(err)
+		}
 		if err := syscall.Setuid(becomeUID); err != nil {
 			panic(err)
 		}
 		if os.Getuid() == 0 {
 			log.Panic("Failed to actually change the uid!\n")
+		}
+		if os.Getgid() == 0 {
+			log.Panic("Failed to actually change the gid!\n")
 		}
 		log.Printf("Transitioned to uid %d\n", becomeUID)
 	}
