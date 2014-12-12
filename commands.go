@@ -22,17 +22,17 @@ func registerCommands(hnd *hndler) error {
 	return nil
 }
 
-func whoami(args []string, out io.Writer) error {
+func whoami(args []string, out io.Writer, state *State) error {
 	_, err := fmt.Fprintf(out, "root\n")
 	return err
 }
 
-func id(args []string, out io.Writer) error {
+func id(args []string, out io.Writer, state *State) error {
 	_, err := fmt.Fprintf(out, "uid=0(root) gid=0(root) groups=0(root)\n")
 	return err
 }
 
-func curl(args []string, out io.Writer) error {
+func curl(args []string, out io.Writer, state *State) error {
 	fileOut := false
 	st := ""
 	for i := range args {
@@ -58,7 +58,7 @@ The document has moved
 	return err
 }
 
-func ls(args []string, out io.Writer) error {
+func ls(args []string, out io.Writer, state *State) error {
 	var dirs []string
 	var err error
 	for i := range args {
