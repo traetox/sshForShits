@@ -6,6 +6,9 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/user"
+	"strconv"
+	"syscall"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -17,14 +20,15 @@ var (
 	portNum              = flag.String("p", "22", "Port to bind to")
 	keyFile              = flag.String("k", "/tmp/hostkey", "Host keyfile for the server")
 	remoteServer         = flag.String("s", "ds063140.mongolab.com:63140", "mongodb server")
-	user                 = flag.String("user", "", "mongodb user")
-	pass                 = flag.String("pass", "", "mongodb password")
+	mong_user            = flag.String("user", "", "mongodb user")
+	mong_pass            = flag.String("pass", "", "mongodb password")
 	db                   = flag.String("db", "sshforshits", "mongodb database")
 	coll                 = flag.String("col", "pwns", "mongodb collection")
-	enforceCert          = flag.Bool("c", false, "Enforce SSL Certs")
+	setuidUser           = flag.String("suid", "nobody", "User to transition to if running as root")
 	logger               *log.Logger
 	hostPrivateKeySigner ssh.Signer
 	activityClient       *shellActivityClient
+	becomeUID            int
 )
 
 func init() {
@@ -32,7 +36,7 @@ func init() {
 	if *remoteServer == "" {
 		log.Panic("Invalid API server url")
 	}
-	if *user == "" || *pass == "" || *db == "" || *coll == "" {
+	if *mong_user == "" || *mong_pass == "" || *db == "" || *coll == "" {
 		log.Panic("Empty mongo info")
 	}
 	if *logFile != "" {
@@ -53,6 +57,19 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
+
+	if *setuidUser != "" && os.Getuid() == 0 {
+		usr, err := user.Lookup(*setuidUser)
+		if err != nil {
+			panic(err)
+		}
+		uid, err := strconv.Atoi(usr.Uid)
+		if err != nil {
+			panic(err)
+		}
+		becomeUID = uid
+	}
+	//clear the password from the command line args
 }
 
 func passAuth(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
@@ -86,8 +103,7 @@ func main() {
 	}
 	hnd := NewHandler()
 	registerCommands(hnd)
-
-	activityClient, err = NewShellActivityClient(*remoteServer, *db, *coll, *user, *pass)
+	activityClient, err = NewShellActivityClient(*remoteServer, *db, *coll, *mong_user, *mong_pass)
 	if err != nil {
 		panic(err)
 	}
@@ -99,6 +115,11 @@ func main() {
 	socket, err := net.Listen("tcp", *bindAddr+":"+port)
 	if err != nil {
 		panic(err)
+	}
+	if becomeUID != 0 {
+		if err := syscall.Setuid(becomeUID); err != nil {
+			panic(err)
+		}
 	}
 	defer socket.Close()
 	for {
@@ -124,13 +145,13 @@ func main() {
 			sshConn.Close()
 			continue
 		}
-		user, ok := sshConn.Permissions.Extensions["username"]
+		username, ok := sshConn.Permissions.Extensions["username"]
 		if !ok {
 			log.Printf("ssh permission extensions is missing the username")
 			sshConn.Close()
 			continue
 		}
-		pass, ok := sshConn.Permissions.Extensions["password"]
+		password, ok := sshConn.Permissions.Extensions["password"]
 		if !ok {
 			log.Printf("ssh permission extensions is missing the password")
 			sshConn.Close()
@@ -140,8 +161,8 @@ func main() {
 			Login: time.Now().Format(time.RFC3339Nano),
 			Src:   sshConn.Conn.RemoteAddr().String(),
 			Dst:   sshConn.Conn.LocalAddr().String(),
-			User:  user,
-			Pass:  pass,
+			User:  username,
+			Pass:  password,
 		}
 		go mainHandler(sshConn, chans, reqs, hnd, dg)
 	}
