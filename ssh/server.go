@@ -66,7 +66,8 @@ type ServerConfig struct {
 	// attempts.
 	AuthLogCallback func(conn ConnMetadata, method string, err error)
 
-	// Version string
+	// ServerVersion contains the version identification string that will
+	// be used for the connection. If empty, a reasonable default is used.
 	ServerVersion string
 }
 
@@ -167,7 +168,10 @@ func (s *connection) serverHandshake(config *ServerConfig) (*Permissions, error)
 	}
 
 	var err error
-	s.serverVersion = []byte(config.ServerVersion)
+	s.serverVersion = []byte(packageVersion)
+	if config.ServerVersion != "" {
+		s.serverVersion = []byte(config.ServerVersion)
+	}
 	s.clientVersion, err = exchangeVersions(s.sshConn.conn, s.serverVersion)
 	if err != nil {
 		return nil, err
