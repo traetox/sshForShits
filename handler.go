@@ -20,6 +20,8 @@ func mainHandler(conn *ssh.ServerConn, chans <-chan ssh.NewChannel, reqs <-chan 
 	go handleRequests(reqs, &wg)
 	go handleChannels(chans, &wg, handler, dg)
 	wg.Wait()
+	conn.Close()
+	conn.Conn.Close()
 }
 
 func handleRequests(reqs <-chan *ssh.Request, wg *sync.WaitGroup) {
@@ -58,7 +60,9 @@ func handleChannels(chans <-chan ssh.NewChannel, wg *sync.WaitGroup, handler fak
 			channel.Close()
 			c.Wait()
 			dg.Logout = time.Now().Format(time.RFC3339Nano)
-			activityClient.Write(dg)
+			if len(dg.ShellActivity) > 0 {
+				activityClient.Write(dg)
+			}
 		}
 
 		//pipe session to bash and visa-versa

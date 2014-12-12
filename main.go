@@ -23,11 +23,14 @@ var (
 	mong_user            = flag.String("user", "", "mongodb user")
 	mong_pass            = flag.String("pass", "", "mongodb password")
 	db                   = flag.String("db", "sshforshits", "mongodb database")
-	coll                 = flag.String("col", "pwns", "mongodb collection")
+	pcoll                = flag.String("pcoll", "pwns", "mongodb shell activity collection")
+	acoll                = flag.String("acoll", "attempts", "mongodb login attempts collection")
+	versionBanner        = flag.String("v", "SSH-2.0-OpenSSH_6.0p1 Debian-4+deb7u2", "Banner to present")
 	setuidUser           = flag.String("suid", "nobody", "User to transition to if running as root")
 	logger               *log.Logger
 	hostPrivateKeySigner ssh.Signer
 	activityClient       *shellActivityClient
+	attemptChan          chan attempt
 	becomeUID            int
 )
 
@@ -36,7 +39,7 @@ func init() {
 	if *remoteServer == "" {
 		log.Panic("Invalid API server url")
 	}
-	if *mong_user == "" || *mong_pass == "" || *db == "" || *coll == "" {
+	if *mong_user == "" || *mong_pass == "" || *db == "" || *pcoll == "" || *acoll == "" {
 		log.Panic("Empty mongo info")
 	}
 	if *logFile != "" {
@@ -69,7 +72,7 @@ func init() {
 		}
 		becomeUID = uid
 	}
-	//clear the password from the command line args
+	attemptChan = make(chan attempt, 16)
 }
 
 func passAuth(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
@@ -86,6 +89,12 @@ func passAuth(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 		CriticalOptions: nil,
 		Extensions:      creds,
 	}
+	attemptChan <- attempt{
+		User:   conn.User(),
+		Pass:   string(pass),
+		TS:     time.Now().Format(time.RFC3339Nano),
+		Origin: conn.RemoteAddr().String(),
+	}
 	return &perm, nil
 }
 
@@ -94,6 +103,7 @@ func main() {
 	var port string
 	config := ssh.ServerConfig{
 		PasswordCallback: passAuth,
+		ServerVersion:    *versionBanner,
 	}
 	config.AddHostKey(hostPrivateKeySigner)
 	if *portNum == "" {
@@ -103,7 +113,7 @@ func main() {
 	}
 	hnd := NewHandler()
 	registerCommands(hnd)
-	activityClient, err = NewShellActivityClient(*remoteServer, *db, *coll, *mong_user, *mong_pass)
+	activityClient, err = NewShellActivityClient(*remoteServer, *db, *pcoll, *acoll, *mong_user, *mong_pass)
 	if err != nil {
 		panic(err)
 	}
@@ -111,6 +121,7 @@ func main() {
 		log.Printf("Failed to login, all writes will be cached until we can actually login")
 		log.Printf("Error: \"%v\"\n", err)
 	}
+	go attempter(activityClient)
 
 	socket, err := net.Listen("tcp", *bindAddr+":"+port)
 	if err != nil {
@@ -120,41 +131,48 @@ func main() {
 		if err := syscall.Setuid(becomeUID); err != nil {
 			panic(err)
 		}
+		if os.Getuid() == 0 {
+			log.Panic("Failed to actually change the uid!\n")
+		}
+		log.Printf("Transitioned to uid %d\n", becomeUID)
 	}
 	defer socket.Close()
 	for {
 		conn, err := socket.Accept()
 		if err != nil {
-			log.Printf("Accept error: %v\n", err)
 			continue
 		}
 
 		// From a standard TCP connection to an encrypted SSH connection
 		sshConn, chans, reqs, err := ssh.NewServerConn(conn, &config)
 		if err != nil {
-			log.Printf("NewServerConn error: %v\n", err)
+			conn.Close()
 			continue
 		}
 		if sshConn.Permissions == nil {
 			log.Printf("Failed to get ssh permissions\n")
 			sshConn.Close()
+			conn.Close()
 			continue
 		}
 		if sshConn.Permissions.Extensions == nil {
 			log.Printf("ssh permissions extensions are nil")
 			sshConn.Close()
+			conn.Close()
 			continue
 		}
 		username, ok := sshConn.Permissions.Extensions["username"]
 		if !ok {
 			log.Printf("ssh permission extensions is missing the username")
 			sshConn.Close()
+			conn.Close()
 			continue
 		}
 		password, ok := sshConn.Permissions.Extensions["password"]
 		if !ok {
 			log.Printf("ssh permission extensions is missing the password")
 			sshConn.Close()
+			conn.Close()
 			continue
 		}
 		dg := datagram{
@@ -165,5 +183,32 @@ func main() {
 			Pass:  password,
 		}
 		go mainHandler(sshConn, chans, reqs, hnd, dg)
+	}
+}
+
+func attempter(sac *shellActivityClient) {
+	var ats []attempt
+	for at := range attemptChan {
+		if err := sac.WriteAttempt(at); err != nil {
+			ats = append(ats, at)
+			if err = sac.Login(); err != nil {
+				time.Sleep(10 * time.Second)
+				continue
+			}
+		}
+		//a write worked, try to clear the backlog
+		i := 0
+	wloop:
+		for i = 0; i < len(ats); i++ {
+			if err := sac.WriteAttempt(ats[i]); err != nil {
+				break wloop
+			}
+		}
+		if i == len(ats) {
+			//we got everything out
+			ats = nil
+		} else {
+			ats = ats[i:len(ats)]
+		}
 	}
 }

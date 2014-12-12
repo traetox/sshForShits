@@ -31,29 +31,38 @@ type command struct {
 	Resp string `json:"resp"`
 }
 
-type shellActivityClient struct {
-	user       string
-	pass       string
-	dst        string
-	db         string
-	collection string
-	session    *mgo.Session
-	status     bool
-	headers    map[string]string
-	mtx        *sync.Mutex
-	cache      *list.List
+type attempt struct {
+	TS     string `json:"ts"`
+	Pass   string `json:"pass"`
+	User   string `json:"user"`
+	Origin string `json:"origin"`
 }
 
-func NewShellActivityClient(dst, db, collection, user, pass string) (*shellActivityClient, error) {
+type shellActivityClient struct {
+	user        string
+	pass        string
+	dst         string
+	db          string
+	pwnColl     string
+	attemptColl string
+	session     *mgo.Session
+	status      bool
+	headers     map[string]string
+	mtx         *sync.Mutex
+	cache       *list.List
+}
+
+func NewShellActivityClient(dst, db, pwnColl, attemptColl, user, pass string) (*shellActivityClient, error) {
 	return &shellActivityClient{
-		user:       user,
-		pass:       pass,
-		dst:        dst,
-		db:         db,
-		collection: collection,
-		headers:    make(map[string]string, 1),
-		mtx:        &sync.Mutex{},
-		cache:      list.New(),
+		user:        user,
+		pass:        pass,
+		dst:         dst,
+		db:          db,
+		pwnColl:     pwnColl,
+		attemptColl: attemptColl,
+		headers:     make(map[string]string, 1),
+		mtx:         &sync.Mutex{},
+		cache:       list.New(),
 	}, nil
 }
 
@@ -97,8 +106,25 @@ func (sac *shellActivityClient) Close() error {
 	return nil
 }
 
+func (sac *shellActivityClient) sendAttempt(at attempt) error {
+	collection := sac.session.DB(sac.db).C(sac.attemptColl)
+	if err := collection.Insert(at); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (sac *shellActivityClient) WriteAttempt(at attempt) error {
+	sac.mtx.Lock()
+	defer sac.mtx.Unlock()
+	if !sac.status {
+		return errors.New("Failed to push attempt")
+	}
+	return sac.sendAttempt(at)
+}
+
 func (sac *shellActivityClient) sendDatagram(dg *datagram) error {
-	collection := sac.session.DB(sac.db).C(sac.collection)
+	collection := sac.session.DB(sac.db).C(sac.pwnColl)
 	if err := collection.Insert(dg); err != nil {
 		return err
 	}
