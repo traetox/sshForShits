@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/crypto/ssh"
+	"github.com/traetox/sshForShits/ssh"
 )
 
 var (
