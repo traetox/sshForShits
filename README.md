@@ -6,3 +6,9 @@ Framework for a high interaction SSH honeypot.  The provided "shell" is just a g
 
 The emulated commands are extremely limited right now, but we welcome more interactive replacements.
 Checkout the commands.go file to add or modify some.
+
+
+A web frontend specifically designed to show shits that got shells can be found at https://github.com/remasis/sshForShitsGooey
+
+
+Thanks remasis for rolling the GUI, because I have no sense of design...
