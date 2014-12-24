@@ -10,6 +10,6 @@ Checkout the commands.go file to add or modify some.
 
 A web frontend specifically designed to show shits that got shells can be found at https://github.com/remasis/sshForShitsGooey
 
-A live instance is running at shellsforshits.com
+A live instance is running at http://shellsforshits.com
 
 Thanks remasis for rolling the GUI, because I have no sense of design...
