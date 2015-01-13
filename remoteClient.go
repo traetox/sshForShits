@@ -148,6 +148,7 @@ func (sac *shellActivityClient) Write(dg datagram) error {
 			break
 		}
 		if err := sac.sendDatagram(d); err != nil {
+			sac.pushCache(*d)
 			return err
 		}
 	}

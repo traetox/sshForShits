@@ -8,7 +8,7 @@ import (
 
 	"github.com/traetox/pty"
 	"github.com/traetox/sshForShits/fakeshell"
-	"github.com/traetox/sshForShits/ssh"
+	"golang.org/x/crypto/ssh"
 )
 
 const (
@@ -45,6 +45,7 @@ func handleChannels(chans <-chan ssh.NewChannel, wg *sync.WaitGroup, handler fak
 		}
 		channel, requests, err := newChannel.Accept()
 		if err != nil {
+			errLog.Printf("Failed to Accept new channel: %v", err)
 			continue
 		}
 
@@ -52,6 +53,7 @@ func handleChannels(chans <-chan ssh.NewChannel, wg *sync.WaitGroup, handler fak
 		c := fakeshell.New("sh-4.3$ ", handler, &dg)
 		f, err := pty.StartFaker(c)
 		if err != nil {
+			errLog.Printf("Failed to start faker: %v", err)
 			continue
 		}
 
@@ -62,11 +64,16 @@ func handleChannels(chans <-chan ssh.NewChannel, wg *sync.WaitGroup, handler fak
 			c.Wait()
 			dg.Logout = time.Now().Format(time.RFC3339Nano)
 			if len(dg.ShellActivity) > 0 {
-				activityClient.Write(dg)
+				if err := activityClient.Write(dg); err != nil {
+					errLog.Printf("Failed to write session: %v", err)
+					if err := activityClient.Login(); err != nil {
+						errLog.Printf("Failed to re-login after Write error: %v", err)
+					}
+				}
 			}
 		}
 
-		//pipe session to bash and visa-versa
+		//pipe session to bash and vice-versa
 		go func() {
 			io.Copy(channel, f)
 			once.Do(close)
