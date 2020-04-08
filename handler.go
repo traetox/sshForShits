@@ -62,6 +62,7 @@ func handleChannels(chans <-chan ssh.NewChannel, wg *sync.WaitGroup, handler fak
 		close := func() {
 			channel.Close()
 			c.Wait()
+			f.Close() //close the PTY device
 			dg.Logout = time.Now().Format(time.RFC3339Nano)
 			if len(dg.ShellActivity) > 0 {
 				if err := activityClient.Write(dg); err != nil {
